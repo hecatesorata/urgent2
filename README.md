@@ -4,7 +4,7 @@ Ini versi APK asli. Kamu **tidak perlu install Node.js, npm, Android Studio, ata
 di HP/laptop kamu. GitHub yang akan membangunkan file APK-nya lewat GitHub Actions —
 kamu tinggal upload folder ini, tunggu beberapa menit, lalu download APK jadi.
 
-Cara kerjanya: aplikasi ini membungkus server Node.js (Express + koneksi WhatsApp)
+Cara kerjanya: aplikasi ini membungkus server Node.js (Express + koneksi WhatsApp)   
 langsung di dalam APK memakai `nodejs-mobile-cordova`, jadi WhatsApp-nya konek
 langsung dari dalam aplikasi itu sendiri — tidak butuh Termux atau komputer lain
 sama sekali setelah APK-nya terinstall.
