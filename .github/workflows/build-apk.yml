@@ -18,6 +18,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Verify Java setup
+        run: |
+          echo "Java version:"
+          java -version
+          echo "Javac version:"
+          javac -version
+
       - name: Setup Node.js (dibutuhkan Cordova CLI)
         uses: actions/setup-node@v4
         with:
@@ -26,44 +33,86 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Terima semua lisensi Android SDK (robust)
+      - name: Verify Android SDK setup
+        run: |
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
+          echo "ANDROID_HOME=${ANDROID_HOME}"
+          ls -la "${ANDROID_HOME}" 2>/dev/null || echo "ANDROID_HOME not found"
+          which sdkmanager || echo "sdkmanager not in PATH"
+
+      - name: Terima semua lisensi Android SDK
         run: |
           set -e
-          echo "Mencari sdkmanager di PATH or common ANDROID_HOME/ANDROID_SDK_ROOT locations..."
+          echo "Mencari sdkmanager..."
           if command -v sdkmanager >/dev/null 2>&1; then
             echo "sdkmanager found on PATH"
             yes | sdkmanager --licenses
           elif [ -x "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" ]; then
-            echo "sdkmanager found at \$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+            echo "sdkmanager found at ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
             yes | "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" --licenses
           elif [ -x "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" ]; then
-            echo "sdkmanager found at \$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+            echo "sdkmanager found at ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
             yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses
           else
-            echo "::error::sdkmanager not found. Listing contents of possible SDK dirs for debugging:"
+            echo "::error::sdkmanager not found"
             echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<not-set>}"
             echo "ANDROID_HOME=${ANDROID_HOME:-<not-set>}"
             ls -la "${ANDROID_SDK_ROOT:-/opt/hostedtoolcache}" 2>/dev/null || true
             ls -la "${ANDROID_HOME:-/opt/hostedtoolcache}" 2>/dev/null || true
-            echo "::error::Cannot accept Android SDK licenses because sdkmanager is missing."
             exit 1
           fi
 
       - name: Install Cordova CLI
         run: npm install -g cordova
 
-      - name: Install dependency project Node.js (yang dibundel ke dalam APK)
+      - name: Verify Cordova installation
+        run: cordova --version
+
+      - name: Install dependency project Node.js
         working-directory: nodejs-assets/nodejs-project
-        run: npm install --omit=dev
+        run: |
+          echo "Installing Node.js dependencies..."
+          npm install --omit=dev
+          echo "Dependencies installed. Checking..."
+          npm list --depth=0
 
       - name: Tambah platform Android
-        run: cordova platform add android
+        run: |
+          echo "Adding Android platform..."
+          cordova platform add android
+          echo "Platform added successfully"
 
       - name: Tambah plugin nodejs-mobile-cordova
-        run: cordova plugin add nodejs-mobile-cordova
+        run: |
+          echo "Adding nodejs-mobile-cordova plugin..."
+          cordova plugin add nodejs-mobile-cordova
+          echo "Plugin added successfully"
 
-      - name: Build APK (debug, sudah bisa langsung diinstall)
-        run: cordova build android --verbose
+      - name: Build APK (debug)
+        run: |
+          echo "Starting Cordova build..."
+          cordova build android --verbose 2>&1 | tee build.log
+          BUILD_EXIT_CODE=$?
+          echo "Build exit code: $BUILD_EXIT_CODE"
+          if [ $BUILD_EXIT_CODE -ne 0 ]; then
+            echo "::error::Cordova build failed with exit code $BUILD_EXIT_CODE"
+            exit $BUILD_EXIT_CODE
+          fi
+
+      - name: Check build outputs
+        if: always()
+        run: |
+          echo "=== Checking for APK/AAB files ==="
+          find platforms/android -type f \( -name "*.apk" -o -name "*.aab" \) 2>/dev/null || echo "No APK/AAB found"
+          
+          echo "=== Directory structure (depth 8) ==="
+          find platforms/android -maxdepth 8 -type d 2>/dev/null | head -30 || true
+          
+          echo "=== Checking app/build outputs ==="
+          ls -la platforms/android/app/build/outputs/ 2>/dev/null || echo "outputs directory not found"
+          
+          echo "=== Gradle build output ==="
+          cat build.log | tail -100 || true
 
       - name: Cari lokasi file APK
         id: find_apk
@@ -72,18 +121,14 @@ jobs:
           echo "Mencari file .apk di platforms/android ..."
           APK_PATH=$(find platforms/android -type f -name "*.apk" | sort | head -n 1 || true)
 
-          # also check the modern path for cordova-android (app/...)
+          # Check modern path for cordova-android (app/build/outputs/...)
           if [ -z "$APK_PATH" ]; then
             echo "Tidak ditemukan di pencarian pertama, cek app build outputs..."
             APK_PATH=$(find platforms/android/app/build/outputs -type f -name "*.apk" | sort | head -n 1 || true)
           fi
 
           if [ -z "$APK_PATH" ]; then
-            echo "::error::Tidak ada file .apk yang ditemukan. Build kemungkinan gagal atau menghasilkan format lain (mis. .aab)."
-            echo "Isi folder build hasil Gradle (untuk debugging):"
-            find platforms/android -type f \( -name "*.apk" -o -name "*.aab" \) 2>/dev/null || true
-            echo "Daftar direktori di platforms/android (maks depth 6):"
-            find platforms/android -maxdepth 6 -type d || true
+            echo "::error::Tidak ada file .apk yang ditemukan. Build kemungkinan gagal."
             exit 1
           fi
 
@@ -95,3 +140,11 @@ jobs:
         with:
           name: triase-wa-apk
           path: ${{ steps.find_apk.outputs.apk_path }}
+          if-no-files-found: error
+
+      - name: Upload build logs for debugging
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build.log
